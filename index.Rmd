@@ -7,6 +7,8 @@ output:
     downcute_theme: chaos
     df_print: paged
     code_folding: show
+    lightbox: true
+    gallery: true
 ---
 
 ```{r setup, include=FALSE}
@@ -32,6 +34,15 @@ test <-
     "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
     na = c("", "NA", "#DIV/0!")
   )
+```
+
+Generate 10 folds for cross-validation, stratified by `classe`. For a dataset of this size, 10-fold cross-validation should be sufficient to optimise bias-variance trade_off.
+
+```{r 10foldcv}
+library(tidymodels)
+tidymodels_prefer()
+wear_folds <-
+  vfold_cv(training, v = 10, strata = classe)
 ```
 
 ## Feature Extraction
@@ -62,27 +73,19 @@ testing <-
   select(-c(raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp))
 ```
 
-Generate 10 folds for cross-validation, stratified by `classe`. For a dataset of this size, 10-fold cross-validation should be sufficient to optimise bias-variance trade_off.
+## Build Models {.tabset}
 
-```{r 10foldcv}
-library(tidymodels)
-tidymodels_prefer()
-wear_folds <-
-  vfold_cv(training, v = 10, strata = classe)
-```
+### Pre-Processing
 
-## Build Models
+Firstly, build a recipe for pre-processing. 1. Remove predictors with at least 90% of data missing (most models do not deal well with missing data)
 
-Firstly, build a recipe for pre-processing.
-1. Remove predictors with at least 90% of data missing (most models do not deal well with missing data)
+2.  Remove predictors with near zero variance (these will not provide useful information but bloat the , model)
 
-2. Remove predictors with near zero variance (these will not provide useful information but bloat the , model)
+3.  Remove highly correlated predictors (as above)
 
-3. Remove highly correlated predictors (as above)
+4.  Remove predictors related to time or the test subject (I might reconsider putting these back in if the model performs poorly)
 
-4. Remove predictors related to time or the test subject (I might reconsider putting these back in if the model performs poorly)
-
-5. Normalise numerical predictors (to improve the fitting algorithms)
+5.  Normalise numerical predictors (to improve the fitting algorithms)
 
 ```{r recipes}
 wear_rec <-
@@ -95,7 +98,8 @@ wear_rec <-
   step_normalize(all_predictors()) %>%
   prep()
 ```
-### Inital Model Testing - Workflow Sets
+
+### Inital Model Testing
 
 Specify three initial classification models.
 
@@ -117,6 +121,7 @@ knn_spec <-
 ```
 
 Generate a workflowset for initial fitting
+
 ```{r workflowsets}
 wear_models <-
   workflow_set(
@@ -140,8 +145,10 @@ wear_rs <-
                metrics = metric_set(accuracy, kap))
 ```
 
-### Tuning hyperparameters for the selected model.
-Use 10-fold cross-validation to tune the `mtry`  and `min_n` hyperparameters for the random forest model.
+### Hyperparameter Tuning
+
+Use 10-fold cross-validation to tune the `mtry` and `min_n` hyperparameters for the random forest model.
+
 ```{r initial_tuning}
 tune_spec <-
   rand_forest(mtry = tune(),
@@ -164,6 +171,7 @@ tune_res <-
 ```
 
 Visualise the effect of hyperparameters on roc_auc.
+
 ```{r visualise_roc}
 tune_res %>%
   collect_metrics() %>%
@@ -178,7 +186,10 @@ tune_res %>%
   facet_wrap( ~ parameter, scales = "free")
 ```
 
+### Further Tuning
+
 Construct a `regular_grid` of hyperparameters over a smaller range than above, to further tune the model.
+
 ```{r regular_grid}
 rf_grid <-
   grid_regular(mtry(range = c(6, 15)),
@@ -194,6 +205,7 @@ regular_res <-
 ```
 
 Visualise the tuning results.
+
 ```{r visualise_metrics}
 regular_res %>%
   collect_metrics() %>%
@@ -205,13 +217,16 @@ regular_res %>%
   facet_wrap(~.metric, scales = "free")
 ```
 
-### Estimating Out of Sample Error
+## Estimating Out of Sample Error
+
 ```{r final_model}
 best_auc <- select_best(regular_res, "roc_auc")
 final_rf <- finalize_model(tune_spec,
                            best_auc)
 ```
+
 The parameters which provide the best auc metric are mtry = `r as.character(best_auc[1])` and min_n = `r as.character(best_auc[2])`. These parameters resulted in estimated out of sample errors as follows;
+
 ```{r OOS_Error}
 best_model_id <-
   regular_res %>%
@@ -224,6 +239,7 @@ OOS <- regular_res %>%
   select(mtry:.metric, mean) %>%
   pivot_wider(names_from = ".metric", values_from = "mean")
 ```
+
 Accuracy: `r OOS[3]`
 
 roc_auc: `r OOS[4]`
@@ -231,7 +247,9 @@ roc_auc: `r OOS[4]`
 The estimated out-of sample error is therefore less than 1 %, suggesting there may be some overfitting.
 
 ## Final Model Fit and Predictions.
+
 Complete a final fit on the whole training set.
+
 ```{r final_fit}
 final_fit <-
   final_rf %>%
@@ -241,14 +259,15 @@ final_fit <-
 ```
 
 Make predictions on the testing set.
+
 ```{r predictions, cache = FALSE}
 print(predict(final_fit,testing))
 ```
 
 ## References
+
 Thanks to the following for access the WLE Dataset.
 
 Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
 
 [Read more](http://web.archive.org/web/20161224072740/http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf)
-
